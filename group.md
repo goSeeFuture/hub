@@ -2,7 +2,7 @@
 
 ## 基础功能
 
-### 慢调用 - SlowCall
+### SlowCall - 慢调用
 
 请求两个页面，解析出页面标题，并打印出来。当然，我们希望同时请求这两个页面，以节省时间。这时，可直接使用Group慢调用`SlowCall()`方法实现，思路是：
 
@@ -19,97 +19,125 @@
 > 每次调用SlowCall都会启动一个协程，调用fn函数，把arg作为fn的入参；  
 > 当fn返回时，返回值通过chan传回到Group协程，Group协程立即调用callback函数，而fn返回值，将作为调用callback的参数传入。
 
-### 事件 - Event
+### Event - 事件
 
-为websocket服务器实现Web API。比如，给echo服务器实现一个广播消息接口。
-
-我们必需另启一个主机端口，用于监听HTTP请求，另外还的在API请求时，与Group协程交互。
-众所周知，HTTP服务器的并发策略是，每个请求分配单独的协程，与Group协程通讯时，就存在跨协程问题，Group的`Emit()`、`Call()`方法将这种情况封装起来，简化了代码书写难度。
+通知协程，且不关心处理结果，Group的Event操作实现这样的情形。
 
 ```golang
-    // 主要代码
-    // 监听`广播`事件
-    hotpot.Global.ListenEvent("广播", func(arg interface{}) {
-        for _, a := range am.Agents() {
-            a.WriteMsg(&Broadcast{Message: arg.(string)})
-        }
+// 主要代码
+type G1Processor struct {
+    g2 *hub.Group
+}
+
+func (p G1Processor) Name() string {
+    return "MyProcessor"
+}
+
+func (p *G1Processor) OnData(data interface{}) interface{} {
+    fmt.Println("recv:", data)
+    if data.(int) == 2 {
+        // 向g2组发送名为`发现目标`的自定义事件，并附带数据data
+        p.g2.Emit("发现目标", data)
+    }
+
+    return nil // 次处已经处理完data，不再向后传递
+}
+
+func main() {
+    g2 := hub.NewGroup()
+    g1 := hub.NewGroup(hub.GroupHandles(&G1Processor{g2}))
+    // g2组监听自定义事件`发现目标`，并打印出事件附带的数据arg
+    g2.ListenEvent("发现目标", func(arg interface{}) {
+        fmt.Println("目标", arg, "已被处理！")
     })
 
-    // 向Group发出`广播`事件
-    hotpot.Global.Emit("广播", msg[0])
+    // g1等待数据，如果是2，则通知g2
+    ch1 := make(chan interface{})
+    g1.Attach(ch1)
+
+    go func() {
+        for i := 0; i < 3; i++ {
+            ch1 <- i + 1
+        }
+    }()
+
+// Output:
+//  recv: 1
+//  recv: 2
+//  目标 2 已被处理！
+//  recv: 3
+}
 ```
 
-[完整示例代码](example/webapi/event/main.go)
-
-```md
-### 启动服务 go run ./example/webapi/main.go
-### 打开多个 http://www.websocket-test.com/ 连接到 ws://localhost:8848
-### 在浏览器中访问地址 http://127.0.0.1:4000/broadcast?msg=这是一条广播消息
-
-### 客户端1
-    服务器 12:2:35
-    {\type\:\Broadcast\,\data\:{\Message\:\这是一条广播消息\}}
-
-### 客户端2
-    服务器 12:2:35
-    {\type\:\Broadcast\,\data\:{\Message\:\这是一条广播消息\}}
-```
-
-![event.png](image/event.png)
+[完整示例代码](example/event/main.go)
 
 使用`Emit()`方法，向Group协程发送事件，最终Group将在自己的协程里，调用`ListenEvent()`注册的函数，作出对事件的实际处理。
 
-我们可以看出Group的事件是异步的，不需要关心事件接收函数的执行结果。些时候，我们需要与Group通讯，并接收其处理结果，这时就需要用到Group的`Call()`方法。
+我们可以看出Group的事件是异步的，不需要关心事件接收函数的执行结果。有时候，我们需要与Group通讯，并接收其处理结果，这时就需要用到Group的`Call()`方法。
 
-### 用法举例3 - 调用
-
-在例2的基础上，返回广播实际发送的客户端数量。
+### Call - 调用
 
 ```golang
-    // 主要代码
-    // 监听`广播`调用
-    hotpot.Global.ListenCall("广播", func(arg interface{}) hotpot.Return {
-        var count int
-        for _, a := range am.Agents() {
-            count++
-            a.WriteMsg(&Broadcast{Message: arg.(string)})
-        }
+// 主要代码
+type G1Processor struct {
+    g2 *hub.Group
+}
 
-        return hotpot.Return{Value: count}
+func (p G1Processor) Name() string {
+    return "MyProcessor"
+}
+
+func (p *G1Processor) OnData(data interface{}) interface{} {
+    fmt.Println("recv:", data)
+    if data.(int) == 2 {
+        waitResult, _ := p.g2.Call("发现目标", data) // 调用g2组绑定的`发现目标`
+        tm := time.Now()
+        ret := waitResult()                                         // 等待g2调用`发现目标`的返回
+        fmt.Println("call spend:", time.Since(tm), ", return:", ret.Value) // 计算本次跨协程调用耗费的事件
+    }
+
+    return nil // 次处已经处理完data，不再向后传递
+}
+
+func main() {
+    g2 := hub.NewGroup()
+    g1 := hub.NewGroup(hub.GroupHandles(&G1Processor{g2}))
+    // 绑定`发现目标`调用的实现函数
+    g2.ListenCall("发现目标", func(arg interface{}) hub.Return {
+        fmt.Println("目标", arg, "已被处理！")
+        time.Sleep(time.Second) // 延时1秒，模拟耗时操作
+        return hub.Return{Value: "ok"}
     })
 
-    // 调用Group中的`广播`处理函数
-    waitResult, _ := hotpot.Global.Call("广播", msg[0])
-    // 等待调用返回结果
-    result := waitResult()
+    // g1等待数据，如果是2，则通知g2
+    ch1 := make(chan interface{})
+    g1.Attach(ch1)
+
+    go func() {
+        for i := 0; i < 3; i++ {
+            ch1 <- i + 1
+        }
+    }()
+
+// Output: 
+//  recv: 1
+//  recv: 2
+//  目标 2 已被处理！
+//  call spend: 1.000181503s , return: ok
+//  recv: 3
+}
+
 ```
 
-[完整示例代码](example/webapi/call/main.go)
+上面的示例代码输出结果，显示调用实际花费了1秒钟，这意味着g1的协程被阻塞了1秒钟。
 
-```md
-### 启动服务 go run ./example/webapi/main.go
-### 打开多个 http://www.websocket-test.com/ 连接到 ws://localhost:8848
-### 在浏览器中访问地址 http://127.0.0.1:4000/broadcast?msg=这是一条广播消息
+[完整示例代码](example/call/main.go)
 
-### 客户端1
-    服务器 12:2:35
-    {\type\:\Broadcast\,\data\:{\Message\:\这是一条广播消息\}}
-
-### 客户端2
-    服务器 12:2:35
-    {\type\:\Broadcast\,\data\:{\Message\:\这是一条广播消息\}}
-
-### 广播页面
-    向2个客户端发送了广播消息
-```
-
-![call.png](image/call.png)
-
-与`Emit()`方法相比，`Call()`多出了同步返回结果，这意味着它会引发阻塞等待，不过对应HTTP这种一个请求一个协程的情形，等待必要结果是合理的，不会因此影响除该请求之外的其他请求。
+与`Emit()`方法相比，`Call()`多出了同步返回结果，这意味着它会引发阻塞等待，不过对于HTTP这种一个请求一个协程的情形，等待必要结果是合理的。
 
 另外，Group还提供了延时方法`AfterFunc`，用途同 time.AfterFunc
 
-### 用法举例4 - 延时调用
+### AfterFunc - 延时调用
 
 让echo服务器定时广播消息
 
@@ -117,67 +145,86 @@
 // 主要代码
 
 func main() {
-    // ... 省略创建服务器代码
+    g := hub.NewGroup()
+    tm := time.Now()
 
-    // 每隔5秒钟，全服广播一次服务器当前时间
-    hotpot.Global.AfterFunc(time.Second*5, broadcastServerTime(am))
+    g.AfterFunc(time.Second, interval(g, tm))
+
+    // wait finished
+    ch := make(chan os.Signal, 1)
+    signal.Notify(ch, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
+    <-ch
 }
 
-func broadcastServerTime(am hotpot.IAgentMgr) func() {
+// 每秒打印一次和开始时间之间的时差
+func interval(g *hub.Group, tm time.Time) func() {
     return func() {
-        // 全服广播一次服务器当前时间
-        s := "当前服务器时间：" + time.Now().Format("2006-01-02 15:04:05")
-        for _, a := range am.Agents() {
-            a.WriteMsg(&Broadcast{Message: s})
-        }
-
-        // 设置下一次定时广播
-        hotpot.Global.AfterFunc(time.Second*5, broadcastServerTime(am))
+        fmt.Println(time.Since(tm))
+        g.AfterFunc(time.Second, interval(g, tm))
     }
 }
+
+//  Output: 
+//  1.000190359s
+//  2.000400558s
+//  3.000600298s
+//  4.000839677s
+//  5.001137354s
+//  6.001427287s
+//  7.001718257s
+//  ...
 ```
 
-[完整示例代码](example/webapi/afterfunc/main.go)
+代码每隔1秒打印一次距离开始的时间。
 
-运行结果
-
-```md
-### 启动服务 go run ./example/webapi/main.go
-### 打开多个 http://www.websocket-test.com/ 连接到 ws://localhost:8848
-### 在浏览器中访问地址 http://127.0.0.1:4000/broadcast?msg=这是一条广播消息
-
-### 客户端1
-    服务器 14:4:24
-    Websocket连接已建立，正在等待数据...
-    服务器 14:4:24
-    {\type\:\Broadcast\,\data\:{\Message\:\当前服务器时间：2021-03-09 14:04:24\}}
-    服务器 14:4:29
-    {\type\:\Broadcast\,\data\:{\Message\:\当前服务器时间：2021-03-09 14:04:29\}}
-    服务器 14:4:34
-    {\type\:\Broadcast\,\data\:{\Message\:\当前服务器时间：2021-03-09 14:04:34\}}
-    服务器 14:4:39
-    {\type\:\Broadcast\,\data\:{\Message\:\当前服务器时间：2021-03-09 14:04:39\}}
-    服务器 14:4:44
-    {\type\:\Broadcast\,\data\:{\Message\:\当前服务器时间：2021-03-09 14:04:44\}}
-
-### 客户端2
-    服务器 14:4:19
-    Websocket连接已建立，正在等待数据...
-    服务器 14:4:19
-    {\type\:\Broadcast\,\data\:{\Message\:\当前服务器时间：2021-03-09 14:04:19\}}
-    服务器 14:4:24
-    {\type\:\Broadcast\,\data\:{\Message\:\当前服务器时间：2021-03-09 14:04:24\}}
-    服务器 14:4:29
-    {\type\:\Broadcast\,\data\:{\Message\:\当前服务器时间：2021-03-09 14:04:29\}}
-    服务器 14:4:34
-    {\type\:\Broadcast\,\data\:{\Message\:\当前服务器时间：2021-03-09 14:04:34\}}
-    服务器 14:4:39
-    {\type\:\Broadcast\,\data\:{\Message\:\当前服务器时间：2021-03-09 14:04:39\}}
-    服务器 14:4:44
-    {\type\:\Broadcast\,\data\:{\Message\:\当前服务器时间：2021-03-09 14:04:44\}}
-```
+[完整示例代码](example/afterfunc/main.go)
 
 实时上，Group的`AfterFunc`方法，基于`SlowCall`实现，将消耗时间的`time.After`操作放在另外的协程中使用，并在超时后，在Group协程里回调callback函数。
+
+### Tick - 定时器
+
+定时调用指定函数，直到返回false时终止。
+
+```golang
+// 主要代码
+
+func main() {
+    g := hub.NewGroup()
+    tm := time.Now()
+    g.Tick(time.Second, intervalLess10s(tm))
+
+    // wait finished
+    ch := make(chan os.Signal, 1)
+    signal.Notify(ch, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
+    <-ch
+}
+
+// 每秒打印一次和开始时间之间的时差，超过10秒，则终止
+func intervalLess10s(tm time.Time) func() bool {
+    return func() bool {
+        since := time.Since(tm)
+        if since.Seconds() > 10 {
+            return false // 终止
+        }
+
+        fmt.Println(since)
+        return true // 继续下一次定时调用
+    }
+}
+
+// Output: 
+//  1.000218997s
+//  2.000463557s
+//  3.00063401s
+//  4.000901112s
+//  5.00111836s
+//  6.001345298s
+//  7.001592142s
+//  8.001830536s
+//  9.002080763s
+```
+
+`Tick()`方法简化了重复`AfterFunc()`延时任务的代码书写。
 
 ## 进阶
 

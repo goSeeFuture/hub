@@ -21,10 +21,10 @@ func (p G1Processor) Name() string {
 func (p *G1Processor) OnData(data interface{}) interface{} {
 	fmt.Println("recv:", data)
 	if data.(int) == 2 {
-		waitResult, _ := p.g2.Call("发现目标", data)
+		waitResult, _ := p.g2.Call("发现目标", data) // 调用g2组绑定的`发现目标`
 		tm := time.Now()
-		ret := waitResult()
-		fmt.Println("call spend:", time.Since(tm), ", return:", ret.Value)
+		ret := waitResult()                                                // 等待g2调用`发现目标`的返回
+		fmt.Println("call spend:", time.Since(tm), ", return:", ret.Value) // 计算本次跨协程调用耗费的事件
 	}
 
 	return nil // 次处已经处理完data，不再向后传递
@@ -33,9 +33,10 @@ func (p *G1Processor) OnData(data interface{}) interface{} {
 func main() {
 	g2 := hub.NewGroup()
 	g1 := hub.NewGroup(hub.GroupHandles(&G1Processor{g2}))
+	// 绑定`发现目标`调用的实现函数
 	g2.ListenCall("发现目标", func(arg interface{}) hub.Return {
 		fmt.Println("目标", arg, "已被处理！")
-		time.Sleep(time.Second)
+		time.Sleep(time.Second) // 延时1秒，模拟耗时操作
 		return hub.Return{Value: "ok"}
 	})
 

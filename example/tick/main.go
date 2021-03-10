@@ -26,10 +26,10 @@ func intervalLess10s(tm time.Time) func() bool {
 	return func() bool {
 		since := time.Since(tm)
 		if since.Seconds() > 10 {
-			return false
+			return false // 终止
 		}
 
 		fmt.Println(since)
-		return true
+		return true // 继续下一次定时调用
 	}
 }

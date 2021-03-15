@@ -230,6 +230,10 @@ func (g *Group) tickCallback(dur time.Duration, fn func() bool) func(Return) {
 
 // 停止并释放资源
 func (g *Group) Stop() {
+	if !g.hub.IsWorking() {
+		return
+	}
+
 	g.hub.Stop()
 	close(g.processChan)
 }

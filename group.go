@@ -145,7 +145,7 @@ func (g *Group) Emit(event string, arg interface{}) (registered bool) {
 // 	arg 附带参数，无参数传 nil
 // 	返回值 waitResult() Return 调用后将阻塞等待事件执行完毕，hotpot.Return 包含事件处理函数的返回值
 // 	返回值 registered 描述 event 是否注册了 handler
-func (g *Group) Call(event string, arg interface{}) (waitResult func() Return, registered bool) {
+func (g *Group) Call(event string, arg interface{}) (ret Return, registered bool) {
 	if isClosedChan(g.processChan) {
 		return
 	}
@@ -153,7 +153,7 @@ func (g *Group) Call(event string, arg interface{}) (waitResult func() Return, r
 	h, exist := g.calls.Load(event)
 	if !exist {
 		log.Trace().Str("event", event).Msg("not register event handler")
-		return nil, false
+		return
 	}
 
 	out := make(chan interface{}, 1)
@@ -176,7 +176,8 @@ func (g *Group) Call(event string, arg interface{}) (waitResult func() Return, r
 	}
 
 	g.processChan <- newEventAsyncCall(out, h.(func(arg interface{}) Return), arg)
-	return fn, true
+
+	return fn(), true
 }
 
 // 绑定事件处理函数

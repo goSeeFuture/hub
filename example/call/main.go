@@ -21,9 +21,8 @@ func (p G1Processor) Name() string {
 func (p *G1Processor) OnData(data interface{}) interface{} {
 	fmt.Println("recv:", data)
 	if data.(int) == 2 {
-		waitResult, _ := p.g2.Call("发现目标", data) // 调用g2组绑定的`发现目标`
-		tm := time.Now()
-		ret := waitResult()                                                // 等待g2调用`发现目标`的返回
+		tm := time.Now()                                                   // 等待g2调用`发现目标`的返回
+		ret, _ := p.g2.Call("发现目标", data)                                  // 调用g2组绑定的`发现目标`
 		fmt.Println("call spend:", time.Since(tm), ", return:", ret.Value) // 计算本次跨协程调用耗费的事件
 	}
 
@@ -53,5 +52,6 @@ func main() {
 	// wait finished
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGINT)
+	fmt.Println("按 ctrl+c 退出程序")
 	<-ch
 }
